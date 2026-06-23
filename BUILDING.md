@@ -79,6 +79,11 @@ These are tracked here so nothing is silently missing:
   self-contained, version-locked build environment). That removes the dependency
   on the mutable runner image at the cost of a large ISO download per run.
 
-> Note: the WDK/SDK version is pinned in three places that must move together:
-> `<WindowsTargetPlatformVersion>` in the driver `.vcxproj`, `SDK_VERSION` in the
-> workflow, and the defaults in `tools/Install-WdkBuildEnv.ps1`.
+> Note on WDK/SDK version: the CI build does **not** hard-pin a version. The
+> `Build driver` step auto-selects the highest SDK under `Windows Kits\10\Include`
+> that actually carries the WDK kernel headers (`km\ntifs.h`) and passes it as
+> `WindowsTargetPlatformVersion`. On today's `windows-2022` image that resolves to
+> `10.0.26100` (the SDK pinned in the `.vcxproj`, `10.0.22621.0`, ships without the
+> matching kernel headers, which is why pinning it broke the build). `SDK_VERSION`
+> in the workflow and the param in `tools/Install-WdkBuildEnv.ps1` are only a
+> fallback-download hint for machines that have no WDK at all.
