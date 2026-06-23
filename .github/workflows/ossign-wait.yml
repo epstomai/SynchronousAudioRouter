@@ -1,0 +1,75 @@
+# OSSign: waiting loop that polls for signed artifacts and re-arms itself.
+#
+# STAGED / NOT YET ACTIVE. Requires the OSSIGN_USER / OSSIGN_TOKEN secrets and a
+# repository environment named "Signatures" with a "Wait timer" protection rule
+# (e.g. 20 min) - the wait timer is what paces the polling, since workflows
+# cannot sleep. Started automatically by ossign-dispatch.yml. See OSSIGN-FOR-EIZ.md.
+name: OSSign Waiting Loop
+
+on:
+  workflow_dispatch:
+    inputs:
+      workflow_id:
+        description: 'The workflow ID from dispatch'
+        required: true
+        type: string
+      attempt:
+        required: false
+        description: 'The attempt number'
+        type: number
+        default: 1
+      max_attempts:
+        required: false
+        description: 'Max attempts (x the environment wait timer = max total wait)'
+        type: number
+        default: 100
+
+jobs:
+  wait-and-check:
+    runs-on: ubuntu-latest
+    # The wait timer on this environment paces each poll (workflows can't sleep).
+    environment: Signatures
+    permissions:
+      actions: write     # to re-dispatch this workflow
+      contents: write    # to publish signed artifacts (e.g. to a release)
+    steps:
+      - name: Stop if the attempt threshold was reached
+        shell: bash
+        run: |
+          if [ ${{ github.event.inputs.attempt }} -gt ${{ github.event.inputs.max_attempts }} ]; then
+            echo "Maximum number of attempts reached, exiting."
+            exit 1
+          fi
+
+      - name: Check if signing is finished
+        id: check
+        uses: ossign/actions/workflow/dispatch@main
+        with:
+          username: ${{ secrets.OSSIGN_USER }}
+          token: ${{ secrets.OSSIGN_TOKEN }}
+          single_check: ${{ github.event.inputs.workflow_id }}
+
+      # signed_artifacts is a JSON array of { id, name, url, browser_download_url }.
+      # Replace this with a step that downloads them and attaches them to a release.
+      - name: Signed - done
+        if: steps.check.outputs.signed_artifacts != ''
+        run: |
+          echo "Signing complete. Signed artifacts: ${{ steps.check.outputs.signed_artifacts }}"
+
+      - name: Not signed yet - bump the attempt counter
+        if: steps.check.outputs.signed_artifacts == ''
+        id: increased
+        run: |
+          echo "Attempt ${{ github.event.inputs.attempt }} not ready, will retry."
+          echo "attempt_no=$(( ${{ github.event.inputs.attempt }} + 1 ))" >> $GITHUB_OUTPUT
+
+      - name: Not signed yet - re-arm the loop
+        if: steps.check.outputs.signed_artifacts == ''
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: ossign-wait.yml
+          inputs: |
+            {
+              "workflow_id": "${{ github.event.inputs.workflow_id }}",
+              "attempt": "${{ steps.increased.outputs.attempt_no }}"
+            }

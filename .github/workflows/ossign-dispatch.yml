@@ -1,0 +1,47 @@
+# OSSign: request EV + Microsoft attestation signing for the driver.
+#
+# STAGED / NOT YET ACTIVE. This requires an approved OSSign project, plus:
+#   - repository secrets OSSIGN_USER / OSSIGN_TOKEN  (provided by OSSign)
+#   - a "Signatures" environment with a wait timer    (see ossign-wait.yml)
+# Until those exist, this workflow is a no-op template. See OSSIGN-FOR-EIZ.md.
+#
+# How it works: the real signed build runs on OSSign's side
+# (OSSign/<owner>--<repo>) using *their* certificate. This workflow only
+# triggers that build and then hands off to the waiting loop to collect the
+# signed .sys/.cat. Build *validation* is already covered by build-and-package.yml.
+name: OSSign Build and Dispatch
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*.*.*']
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write    # needed to start the waiting-loop workflow
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dispatch to OSSign
+        id: dispatch
+        uses: ossign/actions/workflow/dispatch@main
+        with:
+          username: ${{ secrets.OSSIGN_USER }}
+          token: ${{ secrets.OSSIGN_TOKEN }}
+          # Return immediately with a workflow id; the waiting loop polls for the
+          # result so we don't keep a runner billing while OSSign signs.
+          dispatch_only: true
+
+      - name: Show dispatched id
+        run: |
+          echo "Dispatched OSSign workflow id: ${{ steps.dispatch.outputs.workflow_id }}"
+
+      - name: Start the waiting loop
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: ossign-wait.yml
+          inputs: |
+            { "workflow_id": "${{ steps.dispatch.outputs.workflow_id }}" }
